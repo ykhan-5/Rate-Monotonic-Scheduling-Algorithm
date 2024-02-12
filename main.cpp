@@ -6,17 +6,25 @@
 #include <iomanip>
 #include <cmath>
 
+struct args
+{
+  std::string in; //input
+  std::string out; //output
+  int num; //which call it is
+};
+
 // node will be the main struct used for each task
 struct node
 {
-  char name;    // stores the task name
-  int wceTime;  // stores the task worst case execution time
-  int period;   // stores the task period
-  int execLeft; // stores how many executions this task has left in the period
+  std::string name; // stores the task name
+  int wceTime;      // stores the task worst case execution time
+  int period;       // stores the task period
+  int execLeft;     // stores how many executions this task has left in the period
 
-  node(char n, int w, int p, int e) : name(n), wceTime(w), period(p), execLeft(e) {}
+  node(std::string n, int w, int p, int e) : name(n), wceTime(w), period(p), execLeft(e) {}
 
-  bool operator<(const node &other) const // this helps us decide what priority will be in our pQueue
+  // this helps us decide what priority will be in our pQueue
+  bool operator<(const node &other) const 
   {
     if (execLeft == 0 && other.execLeft == 0)
       return period > other.period;
@@ -129,14 +137,15 @@ std::string convertToTaskSchedule(const std::string &input)
 // here is my function used in multi-threading
 void *RMSA(void *x_void_ptr) // RMSA --> Rate Monotonic Scheduling Algorithm
 {
+
   // getting input and initializing structures
-  std::string *input = (std::string *)x_void_ptr;
+  struct args *Boat = (struct args *)x_void_ptr;
   std::priority_queue<node> pq;
   std::vector<node> Ttasks;
-  std::istringstream iss(*input);
+  std::istringstream iss(Boat->in);
 
   // initializing variables
-  char name;
+  std::string name;
   std::string output = "";
   int wceTime, period;
   int numTasks = 0;
@@ -153,8 +162,8 @@ void *RMSA(void *x_void_ptr) // RMSA --> Rate Monotonic Scheduling Algorithm
   // printing CPU #
   threadCount++;
   int hyperPeriod = calculateHyperPeriod(pq);
-  std::cout << "CPU " << threadCount << "\n";
-  std::cout << "Task scheduling information: ";
+  // std::cout << "CPU " << threadCount << "\n";
+  Boat->out += "Task scheduling information: ";
 
   // this for-loop gets the utilization number, as well as line one printing
   for (std::vector<node>::const_iterator it = Ttasks.begin(); it != Ttasks.end(); ++it)
@@ -162,39 +171,37 @@ void *RMSA(void *x_void_ptr) // RMSA --> Rate Monotonic Scheduling Algorithm
     const node &task = *it;
     numTasks++;
     util = util + (static_cast<double>(task.wceTime) / static_cast<double>(task.period));
-    std::cout << task.name << " (WCET: " << task.wceTime << ", Period: " << task.period;
+    Boat->out += task.name + " (WCET: " + std::to_string(task.wceTime) + ", Period: " + std::to_string(task.period);
     if (numTasks < Ttasks.size())
     {
-      std::cout << "), "; // Print comma if it's not the last element
+      Boat->out += "), "; // Print comma if it's not the last element
     }
     else
     {
-      std::cout << ")"; // If it's the last element, don't print comma
+      Boat->out += ") "; // If it's the last element, don't print comma
     }
   }
 
   // more printing
-  std::cout << std::endl;
-  std::cout << std::fixed;
-  std::cout << std::setprecision(2);
-  std::cout << "Task set utilization: " << util;
-  std::cout << std::endl;
+  std::stringstream utilStream;
+  utilStream << std::fixed << std::setprecision(2) << util;
+  Boat->out += "\nTask set utilization: " + utilStream.str();
 
-  std::cout << "Hyperperiod: " << hyperPeriod << std::endl;
-  std::cout << "Rate Monotonic Algorithm execution for CPU" << threadCount << ":\n";
+  Boat->out += "\nHyperperiod: " + std::to_string(hyperPeriod) + "\n";
+  Boat->out += "Rate Monotonic Algorithm execution for CPU " + std::to_string(Boat->num) + ":\n";
 
   // logic based on utilization and formula given in directions
   if (util > 1)
   {
-    std::cout << "The task set is not schedulable" << std::endl;
+    Boat->out += "The task set is not schedulable\n";
   }
   else if (util > calculateExpression(numTasks))
   {
-    std::cout << "Task set schedulability is unknown" << std::endl;
+    Boat->out += "Task set schedulability is unknown\n";
   }
   else // find the scheduling diagram
   {
-    std::cout << "Scheduling Diagram for CPU " << threadCount << ": ";
+    Boat->out += "Scheduling Diagram for CPU " + std::to_string(Boat->num) + ": ";
     for (int i = 1; i <= hyperPeriod; i++)
     {
       node current = pq.top();
@@ -205,14 +212,14 @@ void *RMSA(void *x_void_ptr) // RMSA --> Rate Monotonic Scheduling Algorithm
         pq.pop();
 
         // adding to my output string which will later be formatted
-        output += std::string(1, current.name);
+        output += current.name;
 
         current.execLeft--;
         pq.push(current);
 
         std::priority_queue<node> temp;
 
-        // checking if any of the nodes have crossed thier period, in which case
+        // checking if any of the nodes have crossed thier period, in which case...
         while (!pq.empty())
         {
           node current = pq.top();
@@ -236,6 +243,7 @@ void *RMSA(void *x_void_ptr) // RMSA --> Rate Monotonic Scheduling Algorithm
 
         std::priority_queue<node> temp;
 
+        // checking if any of the nodes have crossed thier period, in which case...
         while (!pq.empty())
         {
           node current = pq.top();
@@ -243,7 +251,7 @@ void *RMSA(void *x_void_ptr) // RMSA --> Rate Monotonic Scheduling Algorithm
 
           if ((i % current.period == 0 && i != 1))
           {
-            current.execLeft += current.wceTime;
+            current.execLeft += current.wceTime; // i need to add executions!
           }
 
           temp.push(current);
@@ -253,9 +261,8 @@ void *RMSA(void *x_void_ptr) // RMSA --> Rate Monotonic Scheduling Algorithm
       }
     }
   }
-  std::cout << convertToTaskSchedule(output);
-  std::cout << "\n\n"
-            << std::endl;
+  Boat->out += convertToTaskSchedule(output);
+  Boat->out += "\n\n";
 
   return NULL;
 }
@@ -263,8 +270,8 @@ void *RMSA(void *x_void_ptr) // RMSA --> Rate Monotonic Scheduling Algorithm
 int main()
 {
   std::string input = "";
-  int count1; // allows me to set pthread_t tid[] number without using a for-loop
-  int count2; // allows me to make threads and as i make them I increment (++)
+  int count1 = 0; // allows me to set pthread_t tid[] number without using a for-loop
+  int count2 = 0; // allows me to make threads and as i make them I increment (++)
 
   while (getline(std::cin, input))
   {
@@ -272,25 +279,32 @@ int main()
   }
 
   pthread_t tid[count1];
+  struct args x[count1];
 
   std::cin.clear();                 // Clear the EOF flag set by getline
   std::cin.seekg(0, std::ios::beg); // Reset the stream to the beginning
 
   while (getline(std::cin, input))
   {
-    count2++;
-    if (pthread_create(&tid[count2], NULL, RMSA, (void *)&input))
+    x[count2].in = input; //sending the input
+    x[count2].num = count2+1; //sending which CPU# it will handle
+    
+    if (pthread_create(&tid[count2], NULL, RMSA, (void *)&x[count2]))
     {
       std::cerr << "Error creating thread" << std::endl;
       return 1;
     }
-    pthread_join(tid[count2], NULL); // join within the funtion for moodle
+    count2++;
+    // pthread_join(tid[count2], NULL); 
   }
 
-  //   for (int i = 0; i < count; i++)
-  //      pthread_join(tid[i], NULL); //here is how i would join otherwise
+  for (int i = 0; i < count1; i++) //joining threads
+    pthread_join(tid[i], NULL); 
 
-  //   main_fxn(input);
-
+  for (int j = 0; j < count1; j++) //cout of information
+  {
+    std::cout << "CPU " << j+1 << std::endl;
+    std::cout << x[j].out << std::endl;
+  }
   return 0;
 }
