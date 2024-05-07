@@ -1,5 +1,6 @@
 #include <pthread.h>
 #include <iostream>
+#include <vector>
 #include <unistd.h>
 #include <queue>
 #include <sstream>
@@ -8,9 +9,13 @@
 
 struct args
 {
-    std::string in;  // input
-    std::string out; // output
-    int num;         // which call it is
+    std::string in; // input
+    // std::string out;                   // output
+    int num;                           // which call it is
+    int *next;                         // for calling in next thread
+    pthread_mutex_t *input_copy_mutex; // for shared data
+    pthread_mutex_t *print_mutex;      // for printing
+    pthread_cond_t *condition;         // The condition variable.
 };
 
 // node will be the main struct used for each task
@@ -86,7 +91,7 @@ double calculateExpression(int n)
     return n * (std::pow(2.0, 1.0 / n) - 1);
 }
 
-// this function takes the string i create throughout the program and outputs it formatted.
+// this function takes the string I create throughout the program and outputs it formatted.
 std::string convertToTaskSchedule(const std::string &input)
 {
     std::ostringstream resultStream;
@@ -137,12 +142,14 @@ std::string convertToTaskSchedule(const std::string &input)
 // here is my function used in multi-threading
 void *RMSA(void *x_void_ptr) // RMSA --> Rate Monotonic Scheduling Algorithm
 {
+    args Boat = *(args *)x_void_ptr;             // Deinitilization
+    int localNum = Boat.num;                     // turning shared resource into a local resource
+    std::string localString = Boat.in;           // turning shared resource into a local resource
+    pthread_mutex_unlock(Boat.input_copy_mutex); // unlock copying semaphore now that we have it all local
 
-    // getting input and initializing structures
-    struct args *Boat = (struct args *)x_void_ptr;
     std::priority_queue<node> pq;
     std::vector<node> Ttasks;
-    std::istringstream iss(Boat->in);
+    std::istringstream iss(localString);
 
     // initializing variables
     std::string name;
@@ -150,7 +157,7 @@ void *RMSA(void *x_void_ptr) // RMSA --> Rate Monotonic Scheduling Algorithm
     int wceTime, period;
     int numTasks = 0;
     double util = 0;
-    int threadCount;
+    std::string out;
 
     // pushing into two queues, one to help me print, one to be priority
     while (iss >> name >> wceTime >> period)
@@ -160,10 +167,10 @@ void *RMSA(void *x_void_ptr) // RMSA --> Rate Monotonic Scheduling Algorithm
     }
 
     // printing CPU #
-    threadCount++;
     int hyperPeriod = calculateHyperPeriod(pq);
-    // std::cout << "CPU " << threadCount << "\n";
-    Boat->out += "Task scheduling information: ";
+
+    out += "CPU " + std::to_string(localNum) + "\n";
+    out += "Task scheduling information: ";
 
     // this for-loop gets the utilization number, as well as line one printing
     for (std::vector<node>::const_iterator it = Ttasks.begin(); it != Ttasks.end(); ++it)
@@ -171,37 +178,37 @@ void *RMSA(void *x_void_ptr) // RMSA --> Rate Monotonic Scheduling Algorithm
         const node &task = *it;
         numTasks++;
         util = util + (static_cast<double>(task.wceTime) / static_cast<double>(task.period));
-        Boat->out += task.name + " (WCET: " + std::to_string(task.wceTime) + ", Period: " + std::to_string(task.period);
+        out += task.name + " (WCET: " + std::to_string(task.wceTime) + ", Period: " + std::to_string(task.period);
         if (numTasks < Ttasks.size())
         {
-            Boat->out += "), "; // Print comma if it's not the last element
+            out += "), "; // Print comma if it's not the last element
         }
         else
         {
-            Boat->out += ") "; // If it's the last element, don't print comma
+            out += ") "; // If it's the last element, don't print comma
         }
     }
 
     // more printing
     std::stringstream utilStream;
     utilStream << std::fixed << std::setprecision(2) << util;
-    Boat->out += "\nTask set utilization: " + utilStream.str();
+    out += "\nTask set utilization: " + utilStream.str();
 
-    Boat->out += "\nHyperperiod: " + std::to_string(hyperPeriod) + "\n";
-    Boat->out += "Rate Monotonic Algorithm execution for CPU " + std::to_string(Boat->num) + ":\n";
+    out += "\nHyperperiod: " + std::to_string(hyperPeriod) + "\n";
+    out += "Rate Monotonic Algorithm execution for CPU " + std::to_string(localNum) + ":\n";
 
     // logic based on utilization and formula given in directions
     if (util > 1)
     {
-        Boat->out += "The task set is not schedulable\n";
+        out += "The task set is not schedulable\n";
     }
     else if (util > calculateExpression(numTasks))
     {
-        Boat->out += "Task set schedulability is unknown\n";
+        out += "Task set schedulability is unknown\n";
     }
     else // find the scheduling diagram
     {
-        Boat->out += "Scheduling Diagram for CPU " + std::to_string(Boat->num) + ": ";
+        out += "Scheduling Diagram for CPU " + std::to_string(localNum) + ": ";
         for (int i = 1; i <= hyperPeriod; i++)
         {
             node current = pq.top();
@@ -261,50 +268,77 @@ void *RMSA(void *x_void_ptr) // RMSA --> Rate Monotonic Scheduling Algorithm
             }
         }
     }
-    Boat->out += convertToTaskSchedule(output);
-    Boat->out += "\n\n";
+    out += convertToTaskSchedule(output);
+    out += "\n\n";
+
+    pthread_mutex_lock(Boat.print_mutex); // second critical section --> check if num = localNum
+
+    while ((*(Boat.next)) != localNum)
+    {
+        pthread_cond_wait(Boat.condition, Boat.print_mutex); // if not set it to wait until it does
+    }
+
+    pthread_mutex_unlock(Boat.print_mutex); // unlock crit section
+
+    std::cout << out; // print accumulated output
+
+    pthread_mutex_lock(Boat.print_mutex); // lock so we can increment the shared resource
+
+    (*Boat.next)++;
+
+    pthread_cond_broadcast(Boat.condition); // wake up other threads since now we are done
+
+    pthread_mutex_unlock(Boat.print_mutex); // unlock semaphore
 
     return NULL;
 }
 
 int main()
 {
+
+    struct args x;
+    std::vector<std::string> store;
+    pthread_mutex_t input_copy_mutex;
+    pthread_mutex_init(&input_copy_mutex, NULL); // semaphore for copying shared resources
+
+    pthread_mutex_t print_mutex;
+    pthread_mutex_init(&print_mutex, NULL); // semaphore for printing
+
+    static pthread_cond_t condition = PTHREAD_COND_INITIALIZER;
+    static int next = 1;
+    x.input_copy_mutex = &input_copy_mutex;
+    x.print_mutex = &print_mutex;
+    x.condition = &condition;
+    x.next = &next;
+
     std::string input = "";
-    int count1 = 0; // allows me to set pthread_t tid[] number without using a for-loop
-    int count2 = 0; // allows me to make threads and as i make them I increment (++)
+    int count1 = 0; // allows me to set pthread_t tid[]
+    int count2 = 0; // allows me to make threads increment (++) each time
 
     while (getline(std::cin, input))
     {
         count1++;
+        store.push_back(input);
     }
 
     pthread_t tid[count1];
-    struct args x[count1];
 
-    std::cin.clear();                 // Clear the EOF flag set by getline
-    std::cin.seekg(0, std::ios::beg); // Reset the stream to the beginning
-
-    while (getline(std::cin, input))
+    for (int i = 0; i < count1; i++)
     {
-        x[count2].in = input;       // sending the input
-        x[count2].num = count2 + 1; // sending which CPU# it will handle
+        pthread_mutex_lock(&input_copy_mutex); // Enter first critical section
+        x.in = store[i];                       // sending the input
+        x.num = count2 + 1;                    // sending which CPU# it will handle
 
-        if (pthread_create(&tid[count2], NULL, RMSA, (void *)&x[count2]))
+        if (pthread_create(&tid[count2], NULL, RMSA, &x)) // only using one memory address
         {
             std::cerr << "Error creating thread" << std::endl;
             return 1;
         }
         count2++;
-        // pthread_join(tid[count2], NULL);
     }
 
     for (int i = 0; i < count1; i++) // joining threads
         pthread_join(tid[i], NULL);
 
-    for (int j = 0; j < count1; j++) // cout of information
-    {
-        std::cout << "CPU " << j + 1 << std::endl;
-        std::cout << x[j].out << std::endl;
-    }
     return 0;
 }
